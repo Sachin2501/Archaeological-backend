@@ -15,7 +15,7 @@ app = Flask(__name__)
 CORS(app, resources={
     "/api/*": {
         "origins": [
-            "https://archaeological-backend.onrender.com",
+            # "https://archaeological-backend.onrender.com",
             "http://localhost:5000",
             "http://127.0.0.1:5500",
             "http://localhost:3000",
