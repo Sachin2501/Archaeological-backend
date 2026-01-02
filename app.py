@@ -13,7 +13,7 @@ app = Flask(__name__)
 
 # CORS Configuration for Render + Vercel
 CORS(app, resources={
-    r"/api/*": {
+    "/api/*": {
         "origins": [
             "https://archaeological-backend.onrender.com",
             "http://localhost:5000",
