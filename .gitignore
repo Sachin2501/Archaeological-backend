@@ -1,0 +1,35 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+
+# Virtual Environment
+.env
+.venv
+env/
+
+# Project specific (large/data folders)
+processed/     
+uploads/        
+results/        
+models/         
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large files
+*.dll
+*.pyd
+*.bin
+*.h5
+*.pth
+*.pt
