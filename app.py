@@ -8,28 +8,43 @@ from datetime import datetime
 import random
 from werkzeug.utils import secure_filename
 import json
+import traceback
 
+# ================= FLASK APP INIT =================
 app = Flask(__name__)
 
-# CORS Configuration for Render + Vercel
+# Enable CORS for ALL origins and ALL routes
 CORS(app, resources={
-    "/api/*": {
-        "origins": [
-            # "https://archaeological-backend.onrender.com",
-            "http://localhost:5000",
-            "http://127.0.0.1:5500",
-            "http://localhost:3000",
-            "https://archaeological-frontend.vercel.app/",
-            "http://localhost:8000",
-            "http://127.0.0.1:8000"
-        ],
-        "methods": ["GET", "POST", "OPTIONS", "PUT", "DELETE"],
-        "allow_headers": ["Content-Type", "Authorization", "Accept"],
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
+        "allow_headers": ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
         "expose_headers": ["Content-Type", "Content-Length"],
-        "supports_credentials": True,
-        "max_age": 3600
+        "supports_credentials": False,
+        "max_age": 600
     }
 })
+
+# Additional CORS headers for all responses
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, HEAD'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, X-Requested-With'
+    response.headers['Access-Control-Expose-Headers'] = 'Content-Type, Content-Length'
+    response.headers['Access-Control-Max-Age'] = '600'
+    return response
+
+# Handle OPTIONS preflight requests for ALL routes
+@app.route('/', methods=['OPTIONS'])
+@app.route('/<path:path>', methods=['OPTIONS'])
+@app.route('/api/<path:path>', methods=['OPTIONS'])
+def handle_options(path=None):
+    response = jsonify({'status': 'ok'})
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, X-Requested-With')
+    return response, 200
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
@@ -47,6 +62,7 @@ app.config['PROCESSED_FOLDER'] = PROCESSED_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB limit
 app.config['ALLOWED_EXTENSIONS'] = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.gif'}
 
+# ================= AI MODEL =================
 class ArchaeologicalAI:
     def __init__(self):
         print("🧠 Archaeological AI Models Initialized")
@@ -56,11 +72,14 @@ class ArchaeologicalAI:
     def segment_site(self, image_path):
         """Segment archaeological site into ruins, vegetation, and other features"""
         try:
+            print(f"Processing image: {image_path}")
             img = cv2.imread(image_path)
             if img is None:
-                return {"error": "Could not read image"}
+                print("Error: Could not read image")
+                return {"error": "Could not read image", "success": False}
             
             height, width = img.shape[:2]
+            print(f"Image size: {width}x{height}")
             
             # Convert to different color spaces for better segmentation
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -130,6 +149,7 @@ class ArchaeologicalAI:
             result_filename = f"seg_result_{timestamp}_{uuid.uuid4().hex[:8]}.jpg"
             result_path = os.path.join(RESULT_FOLDER, result_filename)
             cv2.imwrite(result_path, result_img)
+            print(f"Result saved: {result_filename}")
             
             return {
                 "success": True,
@@ -148,16 +168,20 @@ class ArchaeologicalAI:
             
         except Exception as e:
             print(f"Segmentation error: {str(e)}")
+            traceback.print_exc()
             return {"error": f"Segmentation failed: {str(e)}", "success": False}
     
     def detect_artifacts(self, image_path):
         """Detect archaeological artifacts using computer vision"""
         try:
+            print(f"Detecting artifacts in: {image_path}")
             img = cv2.imread(image_path)
             if img is None:
-                return {"error": "Could not read image"}
+                print("Error: Could not read image")
+                return {"error": "Could not read image", "success": False}
             
             height, width = img.shape[:2]
+            print(f"Image size: {width}x{height}")
             result_img = img.copy()
             
             # ================= PREPROCESSING =================
@@ -167,6 +191,7 @@ class ArchaeologicalAI:
             
             # ================= CONTOUR DETECTION =================
             contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            print(f"Found {len(contours)} contours")
             
             artifacts = []
             artifact_id = 1
@@ -174,6 +199,7 @@ class ArchaeologicalAI:
             for contour in contours:
                 area = cv2.contourArea(contour)
                 
+                # Filter by area
                 if 500 < area < 20000:
                     perimeter = cv2.arcLength(contour, True)
                     
@@ -230,6 +256,7 @@ class ArchaeologicalAI:
             result_filename = f"detect_result_{timestamp}_{uuid.uuid4().hex[:8]}.jpg"
             result_path = os.path.join(RESULT_FOLDER, result_filename)
             cv2.imwrite(result_path, result_img)
+            print(f"Detection result saved: {result_filename}")
             
             # Group artifacts by type
             artifact_types = {}
@@ -248,11 +275,13 @@ class ArchaeologicalAI:
                 "artifact_types": type_counts,
                 "result_image": f"/results/{result_filename}",
                 "image_size": f"{width}x{height}",
-                "analysis_timestamp": datetime.now().isoformat()
+                "analysis_timestamp": datetime.now().isoformat(),
+                "message": f"Found {len(artifacts)} artifacts"
             }
             
         except Exception as e:
             print(f"Detection error: {str(e)}")
+            traceback.print_exc()
             return {"error": f"Detection failed: {str(e)}", "success": False}
     
     def _classify_artifact(self, area, aspect_ratio, circularity):
@@ -271,7 +300,11 @@ class ArchaeologicalAI:
                 "Ceramic Fragment",
                 "Stone Artifact",
                 "Bone Fragment",
-                "Metal Object"
+                "Metal Object",
+                "Ancient Tool",
+                "Architectural Piece",
+                "Ornament",
+                "Weapon"
             ]
             return random.choice(artifact_categories)
     
@@ -285,7 +318,11 @@ class ArchaeologicalAI:
             "Ceramic Fragment": (42, 42, 165),
             "Stone Artifact": (128, 128, 128),
             "Bone Fragment": (255, 255, 255),
-            "Metal Object": (192, 192, 192)
+            "Metal Object": (192, 192, 192),
+            "Ancient Tool": (255, 0, 255),
+            "Architectural Piece": (255, 255, 0),
+            "Ornament": (147, 20, 255),
+            "Weapon": (0, 0, 255)
         }
         return color_map.get(artifact_type, (255, 255, 255))
 
@@ -301,44 +338,82 @@ def allowed_file(filename):
 
 @app.route('/')
 def index():
+    """Root endpoint - basic info"""
     return jsonify({
         "status": "online",
         "name": "Archaeological AI Backend",
-        "version": "1.0.0",
-        "description": "AI-powered archaeological site analysis",
+        "version": "2.0.0",
+        "description": "AI-powered archaeological site analysis system",
         "timestamp": datetime.now().isoformat(),
         "endpoints": {
-            "upload": "/api/upload",
-            "segment": "/api/segment",
-            "detect": "/api/detect",
-            "health": "/api/health"
+            "upload": "/api/real/upload",
+            "segment": "/api/real/segment",
+            "detect": "/api/real/detect",
+            "health": "/api/health",
+            "test": "/api/test"
         }
     })
 
-@app.route('/api/health')
+@app.route('/api/health', methods=['GET', 'OPTIONS'])
 def health_check():
+    """Health check endpoint"""
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+    
     return jsonify({
         "status": "healthy",
         "service": "archaeological-backend",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "ai_ready": True,
+        "storage": {
+            "uploads": len(os.listdir(UPLOAD_FOLDER)),
+            "results": len(os.listdir(RESULT_FOLDER))
+        }
     })
 
-@app.route('/api/upload', methods=['POST'])
-def handle_upload():
-    """Handle image upload"""
+@app.route('/api/test', methods=['GET', 'OPTIONS'])
+def test_endpoint():
+    """Test endpoint for debugging"""
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+    
+    return jsonify({
+        "success": True,
+        "message": "Backend is working correctly!",
+        "endpoint": "/api/test",
+        "timestamp": datetime.now().isoformat(),
+        "cors_enabled": True,
+        "request_origin": request.headers.get('Origin', 'Not specified')
+    })
+
+# ================= MAIN ENDPOINTS =================
+
+@app.route('/api/real/upload', methods=['POST', 'OPTIONS'])
+def handle_real_upload():
+    """Handle image upload - main endpoint"""
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+    
     try:
+        print("Upload endpoint called")
+        print(f"Request Origin: {request.headers.get('Origin')}")
+        print(f"Request files: {list(request.files.keys())}")
+        
         if 'file' not in request.files:
+            print("No file in request")
             return jsonify({"success": False, "error": "No file provided"}), 400
         
         file = request.files['file']
+        print(f"File received: {file.filename}")
         
         if file.filename == '':
             return jsonify({"success": False, "error": "No file selected"}), 400
         
         if not allowed_file(file.filename):
+            print(f"Invalid file type: {file.filename}")
             return jsonify({
                 "success": False, 
-                "error": "Invalid file type",
+                "error": "Invalid file type. Allowed: jpg, jpeg, png, tif, tiff, bmp, gif",
                 "allowed_types": list(app.config['ALLOWED_EXTENSIONS'])
             }), 400
         
@@ -348,11 +423,13 @@ def handle_upload():
         
         # Generate unique filename
         unique_id = uuid.uuid4().hex[:8]
-        filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{unique_id}{file_ext}"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_{unique_id}{file_ext}"
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         
         # Save file
         file.save(filepath)
+        print(f"File saved to: {filepath}")
         
         # Verify image
         img = cv2.imread(filepath)
@@ -363,7 +440,9 @@ def handle_upload():
         height, width = img.shape[:2]
         file_size = os.path.getsize(filepath)
         
-        return jsonify({
+        print(f"Image verified: {width}x{height}, {file_size} bytes")
+        
+        response = {
             "success": True,
             "filename": filename,
             "original_name": original_name,
@@ -376,16 +455,28 @@ def handle_upload():
             "preview_url": f"/uploads/{filename}",
             "upload_timestamp": datetime.now().isoformat(),
             "message": "Image uploaded successfully"
-        })
+        }
+        
+        print(f"Upload successful: {response}")
+        return jsonify(response)
         
     except Exception as e:
+        print(f"Upload error: {str(e)}")
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
-@app.route('/api/segment', methods=['POST'])
-def handle_segment():
-    """Handle segmentation request"""
+@app.route('/api/real/segment', methods=['POST', 'OPTIONS'])
+def handle_real_segment():
+    """Handle segmentation request - main endpoint"""
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+    
     try:
+        print(f"Segmentation request received")
+        print(f"Request Origin: {request.headers.get('Origin')}")
+        
         data = request.get_json()
+        print(f"Segmentation request data: {data}")
         
         if not data or 'filename' not in data:
             return jsonify({"success": False, "error": "Filename required"}), 400
@@ -394,6 +485,7 @@ def handle_segment():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         
         if not os.path.exists(filepath):
+            print(f"File not found: {filepath}")
             return jsonify({"success": False, "error": "File not found"}), 404
         
         print(f"Starting segmentation for {filename}")
@@ -401,23 +493,33 @@ def handle_segment():
         result = archaeo_ai.segment_site(filepath)
         
         if "error" in result:
+            print(f"Segmentation failed: {result['error']}")
             return jsonify(result), 500
         
         result["input_image"] = f"/uploads/{filename}"
         
-        print(f"Segmentation completed for {filename}")
+        print(f"Segmentation completed successfully for {filename}")
+        print(f"Results: Ruins {result.get('ruins_percentage', 0)}%, Vegetation {result.get('vegetation_percentage', 0)}%")
         
         return jsonify(result)
         
     except Exception as e:
-        print(f"Segmentation error: {str(e)}")
+        print(f"Segmentation endpoint error: {str(e)}")
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
-@app.route('/api/detect', methods=['POST'])
-def handle_detect():
-    """Handle detection request"""
+@app.route('/api/real/detect', methods=['POST', 'OPTIONS'])
+def handle_real_detect():
+    """Handle detection request - main endpoint"""
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+    
     try:
+        print(f"Detection request received")
+        print(f"Request Origin: {request.headers.get('Origin')}")
+        
         data = request.get_json()
+        print(f"Detection request data: {data}")
         
         if not data or 'filename' not in data:
             return jsonify({"success": False, "error": "Filename required"}), 400
@@ -426,6 +528,7 @@ def handle_detect():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         
         if not os.path.exists(filepath):
+            print(f"File not found: {filepath}")
             return jsonify({"success": False, "error": "File not found"}), 404
         
         print(f"Starting artifact detection for {filename}")
@@ -433,6 +536,7 @@ def handle_detect():
         result = archaeo_ai.detect_artifacts(filepath)
         
         if "error" in result:
+            print(f"Detection failed: {result['error']}")
             return jsonify(result), 500
         
         result["input_image"] = f"/uploads/{filename}"
@@ -443,7 +547,8 @@ def handle_detect():
         return jsonify(result)
         
     except Exception as e:
-        print(f"Detection error: {str(e)}")
+        print(f"Detection endpoint error: {str(e)}")
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
 # ================= STATIC FILE SERVING =================
@@ -451,62 +556,86 @@ def handle_detect():
 @app.route('/uploads/<filename>')
 def serve_upload(filename):
     """Serve uploaded files"""
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    try:
+        return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    except Exception as e:
+        return jsonify({"error": f"File not found: {filename}"}), 404
 
 @app.route('/results/<filename>')
 def serve_result(filename):
     """Serve result files"""
-    return send_from_directory(app.config['RESULT_FOLDER'], filename)
+    try:
+        return send_from_directory(app.config['RESULT_FOLDER'], filename)
+    except Exception as e:
+        return jsonify({"error": f"Result file not found: {filename}"}), 404
 
 @app.route('/processed/<filename>')
 def serve_processed(filename):
     """Serve processed files"""
-    return send_from_directory(app.config['PROCESSED_FOLDER'], filename)
-
-# ================= FRONTEND COMPATIBILITY ROUTES =================
-# These routes match the frontend's expected endpoints
-
-@app.route('/api/resal/upload', methods=['POST'])
-def handle_resal_upload():
-    """Compatibility route for frontend"""
-    return handle_upload()
-
-@app.route('/api/resal/segment', methods=['POST'])
-def handle_resal_segment():
-    """Compatibility route for frontend"""
-    return handle_segment()
-
-@app.route('/api/resal/detect', methods=['POST'])
-def handle_resal_detect():
-    """Compatibility route for frontend"""
-    return handle_detect()
+    try:
+        return send_from_directory(app.config['PROCESSED_FOLDER'], filename)
+    except Exception as e:
+        return jsonify({"error": f"Processed file not found: {filename}"}), 404
 
 # ================= ERROR HANDLING =================
 
 @app.errorhandler(404)
 def not_found(error):
-    return jsonify({"success": False, "error": "Endpoint not found"}), 404
+    return jsonify({
+        "success": False, 
+        "error": "Endpoint not found",
+        "available_endpoints": {
+            "root": "/",
+            "upload": "/api/real/upload",
+            "segment": "/api/real/segment",
+            "detect": "/api/real/detect",
+            "health": "/api/health",
+            "test": "/api/test"
+        }
+    }), 404
 
 @app.errorhandler(500)
 def internal_error(error):
-    return jsonify({"success": False, "error": "Internal server error"}), 500
+    return jsonify({
+        "success": False, 
+        "error": "Internal server error",
+        "message": "Please try again later"
+    }), 500
 
-# ================= MAIN =================
+@app.errorhandler(413)
+def too_large(error):
+    return jsonify({
+        "success": False,
+        "error": "File too large",
+        "max_size": "50MB"
+    }), 413
+
+# ================= APPLICATION STARTUP =================
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     
     print("=" * 70)
-    print("🔬 ARCHAEOLOGICAL AI BACKEND")
+    print("🔬 ARCHAEOLOGICAL AI BACKEND - COMPLETE FIXED VERSION")
     print("=" * 70)
-    print(f"Backend URL: http://localhost:{port}")
-    print(f"Production URL: https://archaeological-backend.onrender.com")
+    print(f"📡 Server starting on port: {port}")
+    print(f"🌐 Production URL: https://archaeological-backend.onrender.com")
     print("-" * 70)
-    print("📊 Available Endpoints:")
-    print("  ✓ /api/upload - Upload image")
-    print("  ✓ /api/segment - Segment site features")
-    print("  ✓ /api/detect - Detect artifacts")
-    print("  ✓ /api/resal/* - Frontend compatibility routes")
+    print("🚀 Available Endpoints:")
+    print("  ✓ GET  /                 - Server status")
+    print("  ✓ GET  /api/health       - Health check")
+    print("  ✓ GET  /api/test         - Test connection")
+    print("  ✓ POST /api/real/upload  - Upload image (MAIN)")
+    print("  ✓ POST /api/real/segment - Segment site features")
+    print("  ✓ POST /api/real/detect  - Detect artifacts")
+    print("  ✓ GET  /uploads/<file>   - Get uploaded image")
+    print("  ✓ GET  /results/<file>   - Get result image")
+    print("-" * 70)
+    print("📁 Storage Directories:")
+    print(f"  • Uploads: {os.path.abspath(UPLOAD_FOLDER)}")
+    print(f"  • Results: {os.path.abspath(RESULT_FOLDER)}")
+    print(f"  • Processed: {os.path.abspath(PROCESSED_FOLDER)}")
     print("=" * 70)
     
-    app.run(debug=True, host='0.0.0.0', port=port)
+    # For Render.com deployment
+    app.run(host='0.0.0.0', port=port, debug=False)
